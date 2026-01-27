@@ -5,18 +5,19 @@ import { PhotoAttire } from "../types";
 const MODEL_NAME = 'gemini-2.5-flash-image';
 
 /**
- * Validates the API key by making a minimal request to the Gemini API.
+ * Validates the API key. 
+ * Results are cached in the UI layer (App.tsx) to prevent redundant hits.
  */
 export const validateApiKey = async (key: string): Promise<boolean> => {
   try {
     const ai = new GoogleGenAI({ apiKey: key });
-    // Minimal request to check if the key is valid and has access
+    // Use the lightest possible model for validation to save quota
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: 'hi',
+      model: 'gemini-flash-lite-latest',
+      contents: 'ping',
     });
     return !!response.text;
-  } catch (error) {
+  } catch (error: any) {
     console.error("API Key Validation Failed:", error);
     return false;
   }
@@ -29,11 +30,10 @@ export const generatePassportPhoto = async (
   sharpness: number = 85,
   manualKey?: string
 ): Promise<string> => {
-  // Prioritize the manual key provided via UI
   const apiKey = manualKey || localStorage.getItem('STUDIO_API_KEY');
   
   if (!apiKey) {
-    throw new Error('API Key Missing. Please set your key in Studio Controls (আইকন ক্লিক করে কী সেট করুন)।');
+    throw new Error('API Key Missing. Please set your key in Studio Controls.');
   }
 
   const ai = new GoogleGenAI({ apiKey: apiKey });
@@ -41,17 +41,14 @@ export const generatePassportPhoto = async (
   const systemInstruction = `You are a professional biometric passport photographer. 
   Your task is to generate an OFFICIAL 2x2 inch passport photo.
   STRICT RULES:
-  1. BACKGROUND: MUST be a solid, flat ${bgColor.name} color (${bgColor.hex}). Absolutely no gradients, shadows, or textures.
-  2. COMPOSITION: Head must be perfectly centered. Face should occupy 55-70% of the image height.
-  3. LIGHTING: Professional even studio lighting. High clarity, no harsh shadows on face or neck.
-  4. QUALITY: Photorealistic, high-resolution 300DPI texture. Sharp focus on eyes.
-  5. ATTIRE: Render the subject in ${attire}. If keeping original, clean the clothes to look ironed and neat.
-  6. EXPRESSION: Front-facing, neutral expression, mouth closed, eyes open looking at camera.`;
+  1. BACKGROUND: MUST be a solid, flat ${bgColor.name} color (${bgColor.hex}). No gradients or shadows.
+  2. COMPOSITION: Head centered. Face 55-70% of height.
+  3. LIGHTING: Professional studio lighting. High clarity.
+  4. QUALITY: Photorealistic, 300DPI.
+  5. ATTIRE: Render in ${attire}.
+  6. EXPRESSION: Front-facing, neutral expression.`;
 
-  const finalPrompt = `Transform this person into a professional 2x2 passport photo. 
-  Background Color: ${bgColor.name} (${bgColor.hex}). 
-  Attire: ${attire}. 
-  Ensure the facial features remain exactly identical to the original image.`;
+  const finalPrompt = `Transform subject to professional 2x2 passport photo. BG: ${bgColor.name}. Attire: ${attire}. Maintain identical facial features.`;
 
   try {
     const response = await ai.models.generateContent({
@@ -79,18 +76,21 @@ export const generatePassportPhoto = async (
 
     const imagePart = response.candidates?.[0]?.content?.parts.find(p => p.inlineData);
     if (!imagePart || !imagePart.inlineData) {
-      throw new Error('Studio Engine failed to render. Try a clearer portrait (ফটোটি পরিষ্কার নয়)।');
+      throw new Error('Studio Engine failed to render. The AI might be busy.');
     }
 
     return `data:image/png;base64,${imagePart.inlineData.data}`;
   } catch (error: any) {
     console.error("Gemini API Error:", error);
-    if (error.message?.includes('429')) {
-      throw new Error('API Quota Full. আপনার ফ্রি লিমিট শেষ অথবা কী-তে সমস্যা। কিছুক্ষণ পর আবার চেষ্টা করুন বা নতুন কী দিন।');
+    const msg = error.message || '';
+    
+    // Explicit 429 handling with instructions
+    if (msg.includes('429')) {
+      throw new Error('QUOTA_EXCEEDED: You have hit the per-minute limit for the Free Tier. Please wait 60 seconds before trying again.');
     }
-    if (error.message?.includes('401') || error.message?.includes('403')) {
-      throw new Error('Invalid API Key. আপনার এপিআই কী সঠিক নয় বা এর পারমিশন নেই। অনুগ্রহ করে পুনরায় চেক করুন।');
+    if (msg.includes('401') || msg.includes('403')) {
+      throw new Error('INVALID_KEY: Your API key is incorrect or has been disabled. Please check AI Studio.');
     }
-    throw new Error(error.message || 'Studio server communication error.');
+    throw new Error(msg || 'Engine communication error.');
   }
 };
