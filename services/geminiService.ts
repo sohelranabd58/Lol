@@ -4,6 +4,24 @@ import { PhotoAttire } from "../types";
 
 const MODEL_NAME = 'gemini-2.5-flash-image';
 
+/**
+ * Validates the API key by making a minimal request to the Gemini API.
+ */
+export const validateApiKey = async (key: string): Promise<boolean> => {
+  try {
+    const ai = new GoogleGenAI({ apiKey: key });
+    // Minimal request to check if the key is valid and has access
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: 'hi',
+    });
+    return !!response.text;
+  } catch (error) {
+    console.error("API Key Validation Failed:", error);
+    return false;
+  }
+};
+
 export const generatePassportPhoto = async (
   base64Image: string,
   attire: PhotoAttire,
@@ -11,8 +29,8 @@ export const generatePassportPhoto = async (
   sharpness: number = 85,
   manualKey?: string
 ): Promise<string> => {
-  // Use manual key provided or fallback to environment variable
-  const apiKey = manualKey || (typeof process !== 'undefined' ? process.env.API_KEY : undefined);
+  // Prioritize the manual key provided via UI
+  const apiKey = manualKey || localStorage.getItem('STUDIO_API_KEY');
   
   if (!apiKey) {
     throw new Error('API Key Missing. Please set your key in Studio Controls (আইকন ক্লিক করে কী সেট করুন)।');
@@ -68,10 +86,10 @@ export const generatePassportPhoto = async (
   } catch (error: any) {
     console.error("Gemini API Error:", error);
     if (error.message?.includes('429')) {
-      throw new Error('API Quota Full. আপনার ফ্রি লিমিট শেষ অথবা কি-তে সমস্যা। নিজের পার্সোনাল কি (Admin Key) ব্যবহার করুন।');
+      throw new Error('API Quota Full. আপনার ফ্রি লিমিট শেষ অথবা কী-তে সমস্যা। কিছুক্ষণ পর আবার চেষ্টা করুন বা নতুন কী দিন।');
     }
     if (error.message?.includes('401') || error.message?.includes('403')) {
-      throw new Error('Invalid API Key. আপনার এপিআই কি সঠিক নয়। অনুগ্রহ করে পুনরায় চেক করুন।');
+      throw new Error('Invalid API Key. আপনার এপিআই কী সঠিক নয় বা এর পারমিশন নেই। অনুগ্রহ করে পুনরায় চেক করুন।');
     }
     throw new Error(error.message || 'Studio server communication error.');
   }
