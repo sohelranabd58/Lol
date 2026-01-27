@@ -6,8 +6,20 @@ import { generatePassportPhoto } from './services/geminiService';
 import { PhotoAttire, StudioHistoryItem } from './types';
 
 const HISTORY_STORAGE_KEY = 'AMR_STUDIO_HISTORY';
-const CACHE_STORAGE_KEY = 'AMR_STUDIO_CACHE';
 const MAX_HISTORY = 15;
+
+// Define the AIStudio interface to match the environment's expected type name.
+interface AIStudio {
+  hasSelectedApiKey: () => Promise<boolean>;
+  openSelectKey: () => Promise<void>;
+}
+
+declare global {
+  interface Window {
+    // Use the AIStudio interface to avoid mismatch with existing global declarations.
+    aistudio: AIStudio;
+  }
+}
 
 const App: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -75,21 +87,15 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const syncHistory = (newHistory: StudioHistoryItem[]) => {
+  const handleSelectApiKey = async () => {
     try {
-      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(newHistory));
+      if (window.aistudio) {
+        await window.aistudio.openSelectKey();
+        setError(null);
+      }
     } catch (e) {
-      console.error("Storage full, could not sync history");
+      console.error("Failed to open key selector", e);
     }
-  };
-
-  /**
-   * Generates a unique key for the current configuration to enable caching.
-   */
-  const getCacheKey = (base64: string): string => {
-    // Hash first 500 chars of base64 to distinguish images efficiently
-    const imgId = base64.substring(0, 500);
-    return `studio_v1_${imgId}_${attire}_${selectedBg.hex}`;
   };
 
   const handleGenerate = async () => {
@@ -103,24 +109,8 @@ const App: React.FC = () => {
     reader.onloadend = async () => {
       try {
         const base64 = reader.result as string;
-        const cacheKey = getCacheKey(base64);
-        
-        // 1. Check local cache first
-        const cachedResult = localStorage.getItem(cacheKey);
-        if (cachedResult) {
-          console.log("Serving from local studio cache...");
-          // Small delay for UX feel
-          await new Promise(r => setTimeout(r, 1500));
-          setResultImageUrl(cachedResult);
-          setIsGenerating(false);
-          return;
-        }
-
-        // 2. No cache, proceed with strictly user-initiated API call
         const result = await generatePassportPhoto(base64, attire, selectedBg);
         
-        // 3. Save to cache and state
-        localStorage.setItem(cacheKey, result);
         setResultImageUrl(result);
         
         const newItem: StudioHistoryItem = { 
@@ -132,9 +122,15 @@ const App: React.FC = () => {
         
         const updatedHistory = [newItem, ...history].slice(0, MAX_HISTORY);
         setHistory(updatedHistory);
-        syncHistory(updatedHistory);
+        localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(updatedHistory));
       } catch (err: any) {
-        setError(err.message || 'Error occurred during generation.');
+        if (err.message === 'QUOTA_EXCEEDED') {
+          setError('STUDIO_LIMIT');
+        } else if (err.message === 'INVALID_KEY') {
+          setError('INVALID_KEY');
+        } else {
+          setError(err.message || 'Error occurred during generation.');
+        }
       } finally {
         setIsGenerating(false);
       }
@@ -169,48 +165,6 @@ const App: React.FC = () => {
     setError(null);
   };
 
-  const purgeHistory = () => {
-    if (window.confirm("Delete all studio archives? This will also clear your local cache.")) {
-      setHistory([]);
-      localStorage.removeItem(HISTORY_STORAGE_KEY);
-      // Clear specific studio cache entries
-      Object.keys(localStorage).forEach(key => {
-        if (key.startsWith('studio_v1_')) localStorage.removeItem(key);
-      });
-    }
-  };
-
-  const generatePrintSheet = () => {
-    if (!resultImageUrl) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = 1800; canvas.height = 1200;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.src = resultImageUrl;
-    img.onload = () => {
-      ctx.fillStyle = "white"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-      const photoSize = 600;
-      const paddingX = (canvas.width - (3 * photoSize)) / 4;
-      const paddingY = (canvas.height - (2 * photoSize)) / 3;
-      for (let row = 0; row < 2; row++) {
-        for (let col = 0; col < 3; col++) {
-          const x = paddingX + col * (photoSize + paddingX);
-          const y = paddingY + row * (photoSize + paddingY);
-          ctx.drawImage(img, x, y, photoSize, photoSize);
-          ctx.strokeStyle = "#f1f5f9"; 
-          ctx.lineWidth = 1;
-          ctx.strokeRect(x, y, photoSize, photoSize);
-        }
-      }
-      const link = document.createElement('a');
-      link.href = canvas.toDataURL('image/png');
-      link.download = `Passport_PrintSheet_2x2inch_${Date.now()}.png`;
-      link.click();
-    };
-  };
-
   const renderDropdownItem = (value: PhotoAttire, config: typeof attireConfig[PhotoAttire]) => (
     <button
       key={value}
@@ -241,10 +195,13 @@ const App: React.FC = () => {
                   <h2 className="text-xl font-black text-white uppercase tracking-tighter">Studio Controls</h2>
                   <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">স্টুডিও কন্ট্রোল</p>
                 </div>
-                <div className="flex items-center space-x-2">
-                   <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                   <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Live Engine</span>
-                </div>
+                <button 
+                  onClick={handleSelectApiKey}
+                  className="flex items-center space-x-2 bg-slate-900 hover:bg-slate-800 px-3 py-1.5 rounded-full transition-colors border border-slate-800"
+                >
+                   <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></div>
+                   <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Select Key</span>
+                </button>
               </div>
 
               <ImageUploader onImageSelect={handleImageSelect} previewUrl={previewUrl} />
@@ -310,7 +267,45 @@ const App: React.FC = () => {
                 </button>
               </div>
               
-              {error && (
+              {error === 'STUDIO_LIMIT' && (
+                <div className="mt-6 p-6 bg-amber-500/5 border border-amber-500/20 rounded-[2.5rem] flex flex-col items-center">
+                   <i className="fas fa-hourglass-half text-amber-500 mb-3 text-xl"></i>
+                   <p className="text-[10px] text-amber-400 font-black text-center uppercase leading-relaxed tracking-wider mb-4">
+                     Daily Studio Limit Reached<br/>স্টুডিওর আজকের লিমিট শেষ
+                   </p>
+                   <button 
+                     onClick={handleSelectApiKey}
+                     className="w-full py-3 bg-amber-500 text-black text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-amber-400 transition-colors"
+                   >
+                     Use My Own API Key
+                   </button>
+                   <a 
+                     href="https://ai.google.dev/gemini-api/docs/billing" 
+                     target="_blank" 
+                     rel="noreferrer"
+                     className="mt-3 text-[8px] text-slate-500 underline uppercase font-bold tracking-widest"
+                   >
+                     Learn about billing
+                   </a>
+                </div>
+              )}
+
+              {error === 'INVALID_KEY' && (
+                <div className="mt-6 p-6 bg-red-500/5 border border-red-500/20 rounded-[2.5rem] flex flex-col items-center">
+                   <i className="fas fa-key text-red-500 mb-3 text-xl"></i>
+                   <p className="text-[10px] text-red-400 font-black text-center uppercase leading-relaxed tracking-wider mb-4">
+                     Invalid Key Selected<br/>সঠিক কি সিলেক্ট করুন
+                   </p>
+                   <button 
+                     onClick={handleSelectApiKey}
+                     className="w-full py-3 bg-red-500 text-white text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-red-400 transition-colors"
+                   >
+                     Reselect API Key
+                   </button>
+                </div>
+              )}
+
+              {error && error !== 'STUDIO_LIMIT' && error !== 'INVALID_KEY' && (
                 <div className="mt-6 p-5 bg-red-500/5 border border-red-500/20 rounded-[2.5rem] flex flex-col items-center">
                    <i className="fas fa-exclamation-triangle text-red-500 mb-3"></i>
                    <p className="text-[10px] text-red-400 font-black text-center uppercase leading-relaxed tracking-wider">{error}</p>
@@ -351,8 +346,7 @@ const App: React.FC = () => {
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-12 w-full max-w-lg">
                     <button onClick={() => { const l = document.createElement('a'); l.href = resultImageUrl!; l.download = '2x2_photo.png'; l.click(); }} className="bg-indigo-600 hover:bg-indigo-700 text-white py-5 rounded-[2rem] font-black text-[11px] uppercase tracking-widest transition-all shadow-xl shadow-indigo-600/20 active:scale-95">Download Single 2x2</button>
-                    <button onClick={generatePrintSheet} className="bg-emerald-600 hover:bg-emerald-700 text-white py-5 rounded-[2rem] font-black text-[11px] uppercase tracking-widest transition-all shadow-xl shadow-emerald-600/20 active:scale-95">Print 4x6 Sheet (6 Photos)</button>
-                    <button onClick={() => { setResultImageUrl(null); setSelectedFile(null); setPreviewUrl(null); }} className="sm:col-span-2 text-[10px] font-black text-slate-500 uppercase py-4 hover:text-white transition-all">Upload New Photo</button>
+                    <button onClick={() => { setResultImageUrl(null); setSelectedFile(null); setPreviewUrl(null); }} className="bg-slate-800 hover:bg-slate-700 text-white py-5 rounded-[2rem] font-black text-[11px] uppercase tracking-widest transition-all shadow-xl active:scale-95">Upload New Photo</button>
                   </div>
                 </div>
               )}
@@ -364,12 +358,6 @@ const App: React.FC = () => {
                    <h3 className="text-white font-black text-lg uppercase tracking-tighter">Studio Archives</h3>
                    <p className="text-slate-600 text-[9px] font-bold uppercase tracking-widest mt-1">আর্কাইভ</p>
                  </div>
-                 {history.length > 0 && (
-                   <button onClick={purgeHistory} className="text-[9px] font-black text-slate-700 hover:text-red-500 uppercase tracking-widest transition-colors flex items-center space-x-2">
-                     <i className="fas fa-trash-alt"></i>
-                     <span>Purge History & Cache</span>
-                   </button>
-                 )}
               </div>
 
               {history.length === 0 ? (
