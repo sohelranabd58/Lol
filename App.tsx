@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Header from './components/Header';
 import ImageUploader from './components/ImageUploader';
-import { generatePassportPhoto } from './services/geminiService';
+import { generatePassportPhoto, validateApiKey } from './services/geminiService';
 import { PhotoAttire, StudioHistoryItem } from './types';
 
 const STORAGE_KEY = 'AMR_STUDIO_HISTORY';
@@ -23,10 +23,12 @@ const App: React.FC = () => {
   
   const [manualApiKey, setManualApiKey] = useState(localStorage.getItem('STUDIO_API_KEY') || '');
   const [isAdminMode, setIsAdminMode] = useState(false);
-  const [keyValidationStatus, setKeyValidationStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [keyValidationStatus, setKeyValidationStatus] = useState<'idle' | 'validating' | 'success' | 'error'>('idle');
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const activeKeyLastDigits = manualApiKey.length > 6 ? manualApiKey.slice(-6) : manualApiKey;
 
   const bgColors = [
     { name: 'Pure White', hex: '#FFFFFF', bn: 'সাদা', class: 'bg-white border-slate-200' },
@@ -91,18 +93,23 @@ const App: React.FC = () => {
     }
   };
 
-  const handleSaveApiKey = () => {
+  const handleSaveApiKey = async () => {
     const trimmedKey = manualApiKey.trim();
     if (!trimmedKey || trimmedKey.length < 20) {
       setKeyValidationStatus('error');
       setTimeout(() => setKeyValidationStatus('idle'), 3000);
       return;
     }
+
+    setKeyValidationStatus('validating');
     
-    if (trimmedKey.startsWith('AIza')) {
+    const isValid = await validateApiKey(trimmedKey);
+    
+    if (isValid) {
       localStorage.setItem('STUDIO_API_KEY', trimmedKey);
       setManualApiKey(trimmedKey);
       setKeyValidationStatus('success');
+      setError(null);
       setTimeout(() => {
         setKeyValidationStatus('idle');
         setIsAdminMode(false);
@@ -146,12 +153,10 @@ const App: React.FC = () => {
   const handleGenerate = async () => {
     if (!selectedFile || isGenerating) return;
     
-    // Refresh manual key from localStorage to be sure
-    const storedKey = localStorage.getItem('STUDIO_API_KEY');
-    const keyToUse = manualApiKey.trim() || storedKey || "";
+    const keyToUse = localStorage.getItem('STUDIO_API_KEY') || "";
     
     if (!keyToUse) {
-      setError("Please set your API Key in Studio Controls. (কী আইকন এ ক্লিক করে কী দিন)");
+      setError("Please set a VALID API Key in Studio Controls first. (আগে সঠিক কী দিন)");
       setIsAdminMode(true);
       return;
     }
@@ -180,7 +185,6 @@ const App: React.FC = () => {
       } catch (err: any) {
         console.error("Generation Error:", err);
         setError(err.message || 'Error occurred during generation.');
-        // If quota or auth error, show admin mode
         if (err.message.includes('Quota') || err.message.includes('Key')) {
           setIsAdminMode(true);
         }
@@ -280,20 +284,28 @@ const App: React.FC = () => {
               {isAdminMode && (
                 <div className="mb-6 p-6 bg-[#080b0f] border border-indigo-500/10 rounded-[2.5rem] animate-in slide-in-from-top-4 relative overflow-hidden group shadow-2xl">
                   <div className="flex flex-col space-y-5">
-                    <label className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] block">
-                      Google AI Studio Key
-                      <span className="block text-[8px] text-slate-600 normal-case mt-1 font-medium tracking-normal">(Required for photo generation)</span>
-                    </label>
+                    <div className="flex justify-between items-center">
+                      <label className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] block">
+                        Google AI Studio Key
+                      </label>
+                      {manualApiKey && (
+                        <span className="text-[8px] font-mono text-indigo-400/60 bg-indigo-500/5 px-2 py-1 rounded-lg border border-indigo-500/10">
+                          Active: *{activeKeyLastDigits}
+                        </span>
+                      )}
+                    </div>
                     
                     <div className="relative">
-                      <div className={`p-4 bg-[#05070a] border ${keyValidationStatus === 'error' ? 'border-red-500/50' : keyValidationStatus === 'success' ? 'border-emerald-500/50' : 'border-slate-800/80'} rounded-2xl flex items-center transition-all shadow-inner`}>
+                      <div className={`p-4 bg-[#05070a] border ${keyValidationStatus === 'error' ? 'border-red-500/50' : keyValidationStatus === 'success' ? 'border-emerald-500/50' : keyValidationStatus === 'validating' ? 'border-indigo-500/50' : 'border-slate-800/80'} rounded-2xl flex items-center transition-all shadow-inner`}>
                          <input 
                           type="password"
                           value={manualApiKey}
                           onChange={(e) => { setManualApiKey(e.target.value); setKeyValidationStatus('idle'); }}
-                          placeholder="Enter AI Studio Key..."
+                          placeholder="Paste AI Studio Key here..."
                           className="w-full bg-transparent text-xs text-indigo-100 outline-none placeholder:text-slate-800 font-mono"
+                          disabled={keyValidationStatus === 'validating'}
                         />
+                        {keyValidationStatus === 'validating' && <i className="fas fa-circle-notch fa-spin text-indigo-500 ml-2"></i>}
                         {keyValidationStatus === 'success' && <i className="fas fa-check-circle text-emerald-500 ml-2 animate-in zoom-in"></i>}
                         {keyValidationStatus === 'error' && <i className="fas fa-exclamation-circle text-red-500 ml-2 animate-in zoom-in"></i>}
                       </div>
@@ -301,15 +313,18 @@ const App: React.FC = () => {
                     
                     <button 
                       onClick={handleSaveApiKey}
+                      disabled={keyValidationStatus === 'validating'}
                       className={`w-full py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.3em] text-white transition-all shadow-xl ${
+                        keyValidationStatus === 'validating' ? 'bg-indigo-900 cursor-wait' :
                         keyValidationStatus === 'success' ? 'bg-emerald-600' : 'bg-indigo-600 hover:bg-indigo-500 hover:shadow-indigo-600/30'
                       }`}
                     >
-                      {keyValidationStatus === 'success' ? 'Saved Successfully' : 'Save & Validate Key'}
+                      {keyValidationStatus === 'validating' ? 'Validating Key...' : 
+                       keyValidationStatus === 'success' ? 'Verified & Saved' : 'Save & Validate Key'}
                     </button>
                     
                     {keyValidationStatus === 'error' && (
-                      <p className="text-[8px] font-black text-red-500 uppercase text-center tracking-widest animate-pulse">Invalid API Key Format</p>
+                      <p className="text-[8px] font-black text-red-500 uppercase text-center tracking-widest animate-pulse">Connection Failed / Invalid Key</p>
                     )}
                   </div>
                 </div>
@@ -367,25 +382,35 @@ const App: React.FC = () => {
                 )}
               </div>
 
-              <button
-                onClick={handleGenerate}
-                disabled={!selectedFile || isGenerating}
-                className={`w-full mt-10 py-5 rounded-[2rem] font-black text-[11px] uppercase tracking-[0.4em] text-white transition-all flex items-center justify-center space-x-4 shadow-3xl ${
-                  !selectedFile || isGenerating ? 'bg-slate-900 text-slate-700 cursor-not-allowed border border-slate-800/40' : 'bg-indigo-600 hover:bg-indigo-700 hover:shadow-indigo-500/20 active:scale-95'
-                }`}
-              >
-                {isGenerating ? <><i className="fas fa-circle-notch fa-spin"></i><span>Processing...</span></> : <><i className="fas fa-bolt"></i><span>Render 2x2 Photo</span></>}
-              </button>
+              <div className="mt-10">
+                <button
+                  onClick={handleGenerate}
+                  disabled={!selectedFile || isGenerating}
+                  className={`w-full py-5 rounded-[2rem] font-black text-[11px] uppercase tracking-[0.4em] text-white transition-all flex items-center justify-center space-x-4 shadow-3xl ${
+                    !selectedFile || isGenerating ? 'bg-slate-900 text-slate-700 cursor-not-allowed border border-slate-800/40' : 'bg-indigo-600 hover:bg-indigo-700 hover:shadow-indigo-500/20 active:scale-95'
+                  }`}
+                >
+                  {isGenerating ? <><i className="fas fa-circle-notch fa-spin"></i><span>Processing...</span></> : <><i className="fas fa-bolt"></i><span>Render 2x2 Photo</span></>}
+                </button>
+                {manualApiKey && (
+                  <p className="text-center mt-3 text-[8px] font-black text-slate-600 uppercase tracking-widest">
+                    Using Key Ending In: <span className="text-indigo-500">*{activeKeyLastDigits}</span>
+                  </p>
+                )}
+              </div>
               
               {error && (
                 <div className="mt-6 p-4 bg-red-500/5 border border-red-500/20 rounded-2xl flex flex-col items-center">
                    <p className="text-[9px] text-red-400 font-bold text-center uppercase mb-2">{error}</p>
+                   {manualApiKey && (
+                     <p className="text-[7px] text-red-400/60 font-mono uppercase mb-3">Failed Key: *{activeKeyLastDigits}</p>
+                   )}
                    {(error.includes('Quota') || error.includes('Key')) && (
                      <button 
                        onClick={() => setIsAdminMode(true)}
                        className="text-[8px] text-white bg-red-600 px-4 py-1.5 rounded-full font-black uppercase tracking-widest hover:bg-red-500 transition-colors"
                      >
-                       Open Settings / সেটিংস ঠিক করুন
+                       Change API Key / কী ঠিক করুন
                      </button>
                    )}
                 </div>
@@ -411,9 +436,15 @@ const App: React.FC = () => {
                     <div className="absolute inset-x-0 h-[2px] bg-gradient-to-r from-transparent via-indigo-500 to-transparent animate-[scan_2s_linear_infinite]"></div>
                     <i className="fas fa-magic text-4xl text-indigo-400/30 animate-pulse"></i>
                   </div>
-                  <div className="space-y-2">
-                    <h3 className="text-white font-black text-xl uppercase">{loadingMessages[loadingStep].en}</h3>
-                    <p className="text-indigo-400 font-bold text-xs uppercase">{loadingMessages[loadingStep].bn}</p>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <h3 className="text-white font-black text-xl uppercase">{loadingMessages[loadingStep].en}</h3>
+                      <p className="text-indigo-400 font-bold text-xs uppercase">{loadingMessages[loadingStep].bn}</p>
+                    </div>
+                    <div className="flex items-center justify-center space-x-2 bg-indigo-500/5 px-4 py-2 rounded-full border border-indigo-500/10 max-w-fit mx-auto">
+                      <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Active Engine:</span>
+                      <span className="text-[9px] font-mono text-white/80">Key *{activeKeyLastDigits}</span>
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -504,4 +535,5 @@ const App: React.FC = () => {
     </div>
   );
 };
+
 export default App;
