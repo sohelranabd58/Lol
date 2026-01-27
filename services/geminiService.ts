@@ -6,18 +6,17 @@ const MODEL_NAME = 'gemini-2.5-flash-image';
 
 /**
  * Generates a passport photo using the Gemini API.
- * Uses process.env.API_KEY exclusively as per system requirements.
  */
 export const generatePassportPhoto = async (
   base64Image: string,
   attire: PhotoAttire,
   bgColor: { name: string, hex: string }
 ): Promise<string> => {
-  // Cloudflare will inject this via the build step define.
+  // Always create a new instance to get the latest key from process.env.API_KEY
   const apiKey = process.env.API_KEY;
   
   if (!apiKey || apiKey === "undefined") {
-    throw new Error('Cloudflare Environment Error: API_KEY is not reaching the frontend. Please check vite.config.ts and Redeploy.');
+    throw new Error('API_KEY_MISSING');
   }
 
   const ai = new GoogleGenAI({ apiKey });
@@ -51,6 +50,7 @@ export const generatePassportPhoto = async (
         ],
       },
       config: {
+        systemInstruction,
         imageConfig: {
           aspectRatio: "1:1",
         }
@@ -67,8 +67,11 @@ export const generatePassportPhoto = async (
     console.error("Gemini API Error:", error);
     const msg = error.message || '';
     
-    if (msg.includes('429')) {
-      throw new Error('QUOTA_EXCEEDED: Daily limit reached. Try again later.');
+    if (msg.includes('429') || msg.includes('quota')) {
+      throw new Error('QUOTA_EXCEEDED');
+    }
+    if (msg.includes('Requested entity was not found')) {
+      throw new Error('INVALID_KEY');
     }
     throw new Error(msg || 'Connection error with AI Studio.');
   }
