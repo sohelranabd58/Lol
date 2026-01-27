@@ -7,6 +7,7 @@ import { PhotoAttire, StudioHistoryItem } from './types';
 
 const STORAGE_KEY = 'AMR_STUDIO_HISTORY';
 const MAX_HISTORY = 15;
+const QUOTA_COOLDOWN_TIME = 30; // seconds
 
 const App: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -24,6 +25,7 @@ const App: React.FC = () => {
   const [manualApiKey, setManualApiKey] = useState(localStorage.getItem('STUDIO_API_KEY') || '');
   const [isAdminMode, setIsAdminMode] = useState(false);
   const [keyValidationStatus, setKeyValidationStatus] = useState<'idle' | 'validating' | 'success' | 'error'>('idle');
+  const [cooldown, setCooldown] = useState(0);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -81,6 +83,17 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // Cooldown logic for 429
+  useEffect(() => {
+    let timer: any;
+    if (cooldown > 0) {
+      timer = setInterval(() => {
+        setCooldown(prev => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [cooldown]);
+
   const syncHistory = (newHistory: StudioHistoryItem[]) => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(newHistory));
@@ -101,13 +114,24 @@ const App: React.FC = () => {
       return;
     }
 
+    // Check session cache to avoid redundant hits
+    const cachedValidKey = sessionStorage.getItem(`valid_${trimmedKey}`);
+    if (cachedValidKey === 'true') {
+      localStorage.setItem('STUDIO_API_KEY', trimmedKey);
+      setKeyValidationStatus('success');
+      setTimeout(() => {
+        setKeyValidationStatus('idle');
+        setIsAdminMode(false);
+      }, 1000);
+      return;
+    }
+
     setKeyValidationStatus('validating');
-    
     const isValid = await validateApiKey(trimmedKey);
     
     if (isValid) {
       localStorage.setItem('STUDIO_API_KEY', trimmedKey);
-      setManualApiKey(trimmedKey);
+      sessionStorage.setItem(`valid_${trimmedKey}`, 'true');
       setKeyValidationStatus('success');
       setError(null);
       setTimeout(() => {
@@ -117,6 +141,15 @@ const App: React.FC = () => {
     } else {
       setKeyValidationStatus('error');
       setTimeout(() => setKeyValidationStatus('idle'), 3000);
+    }
+  };
+
+  const handleClearKey = () => {
+    if (window.confirm("Remove current API Key?")) {
+      localStorage.removeItem('STUDIO_API_KEY');
+      setManualApiKey('');
+      setKeyValidationStatus('idle');
+      setError(null);
     }
   };
 
@@ -151,12 +184,11 @@ const App: React.FC = () => {
   };
 
   const handleGenerate = async () => {
-    if (!selectedFile || isGenerating) return;
+    if (!selectedFile || isGenerating || cooldown > 0) return;
     
     const keyToUse = localStorage.getItem('STUDIO_API_KEY') || "";
-    
     if (!keyToUse) {
-      setError("Please set a VALID API Key in Studio Controls first. (আগে সঠিক কী দিন)");
+      setError("Please set a VALID API Key first. (আগে সঠিক কী দিন)");
       setIsAdminMode(true);
       return;
     }
@@ -184,8 +216,15 @@ const App: React.FC = () => {
         syncHistory(updatedHistory);
       } catch (err: any) {
         console.error("Generation Error:", err);
-        setError(err.message || 'Error occurred during generation.');
-        if (err.message.includes('Quota') || err.message.includes('Key')) {
+        let errorMsg = err.message || 'Error occurred during generation.';
+        
+        if (errorMsg.includes('QUOTA')) {
+          setCooldown(QUOTA_COOLDOWN_TIME);
+          errorMsg = "API Quota Full. আপনার ফ্রি লিমিট শেষ। অনুগ্রহ করে ৬০ সেকেন্ড অপেক্ষা করুন বা অন্য কী দিন।";
+        }
+        
+        setError(errorMsg);
+        if (errorMsg.includes('QUOTA') || errorMsg.includes('KEY')) {
           setIsAdminMode(true);
         }
       } finally {
@@ -206,7 +245,7 @@ const App: React.FC = () => {
   };
 
   const purgeHistory = () => {
-    if (window.confirm("Delete all studio archives? এটি আপনার সকল সেভ করা ফটো মুছে ফেলবে।")) {
+    if (window.confirm("Delete all studio archives?")) {
       setHistory([]);
       localStorage.removeItem(STORAGE_KEY);
     }
@@ -289,9 +328,12 @@ const App: React.FC = () => {
                         Google AI Studio Key
                       </label>
                       {manualApiKey && (
-                        <span className="text-[8px] font-mono text-indigo-400/60 bg-indigo-500/5 px-2 py-1 rounded-lg border border-indigo-500/10">
-                          Active: *{activeKeyLastDigits}
-                        </span>
+                        <div className="flex items-center space-x-2">
+                           <span className="text-[8px] font-mono text-indigo-400/60 bg-indigo-500/5 px-2 py-1 rounded-lg border border-indigo-500/10">
+                            Active: *{activeKeyLastDigits}
+                          </span>
+                          <button onClick={handleClearKey} className="text-[8px] text-red-500/50 hover:text-red-500 transition-colors uppercase font-black">Clear</button>
+                        </div>
                       )}
                     </div>
                     
@@ -322,10 +364,6 @@ const App: React.FC = () => {
                       {keyValidationStatus === 'validating' ? 'Validating Key...' : 
                        keyValidationStatus === 'success' ? 'Verified & Saved' : 'Save & Validate Key'}
                     </button>
-                    
-                    {keyValidationStatus === 'error' && (
-                      <p className="text-[8px] font-black text-red-500 uppercase text-center tracking-widest animate-pulse">Connection Failed / Invalid Key</p>
-                    )}
                   </div>
                 </div>
               )}
@@ -385,34 +423,46 @@ const App: React.FC = () => {
               <div className="mt-10">
                 <button
                   onClick={handleGenerate}
-                  disabled={!selectedFile || isGenerating}
+                  disabled={!selectedFile || isGenerating || cooldown > 0}
                   className={`w-full py-5 rounded-[2rem] font-black text-[11px] uppercase tracking-[0.4em] text-white transition-all flex items-center justify-center space-x-4 shadow-3xl ${
-                    !selectedFile || isGenerating ? 'bg-slate-900 text-slate-700 cursor-not-allowed border border-slate-800/40' : 'bg-indigo-600 hover:bg-indigo-700 hover:shadow-indigo-500/20 active:scale-95'
+                    !selectedFile || isGenerating || cooldown > 0 ? 'bg-slate-900 text-slate-700 cursor-not-allowed border border-slate-800/40' : 'bg-indigo-600 hover:bg-indigo-700 hover:shadow-indigo-500/20 active:scale-95'
                   }`}
                 >
-                  {isGenerating ? <><i className="fas fa-circle-notch fa-spin"></i><span>Processing...</span></> : <><i className="fas fa-bolt"></i><span>Render 2x2 Photo</span></>}
+                  {isGenerating ? <><i className="fas fa-circle-notch fa-spin"></i><span>Processing...</span></> : 
+                   cooldown > 0 ? <><i className="fas fa-clock"></i><span>Wait {cooldown}s</span></> :
+                   <><i className="fas fa-bolt"></i><span>Render 2x2 Photo</span></>}
                 </button>
                 {manualApiKey && (
                   <p className="text-center mt-3 text-[8px] font-black text-slate-600 uppercase tracking-widest">
-                    Using Key Ending In: <span className="text-indigo-500">*{activeKeyLastDigits}</span>
+                    Using Engine: <span className="text-indigo-500">*{activeKeyLastDigits}</span>
                   </p>
                 )}
               </div>
               
               {error && (
-                <div className="mt-6 p-4 bg-red-500/5 border border-red-500/20 rounded-2xl flex flex-col items-center">
-                   <p className="text-[9px] text-red-400 font-bold text-center uppercase mb-2">{error}</p>
-                   {manualApiKey && (
-                     <p className="text-[7px] text-red-400/60 font-mono uppercase mb-3">Failed Key: *{activeKeyLastDigits}</p>
-                   )}
-                   {(error.includes('Quota') || error.includes('Key')) && (
-                     <button 
-                       onClick={() => setIsAdminMode(true)}
-                       className="text-[8px] text-white bg-red-600 px-4 py-1.5 rounded-full font-black uppercase tracking-widest hover:bg-red-500 transition-colors"
-                     >
-                       Change API Key / কী ঠিক করুন
-                     </button>
-                   )}
+                <div className="mt-6 p-5 bg-red-500/5 border border-red-500/20 rounded-[2.5rem] flex flex-col items-center">
+                   <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center text-red-500 mb-4 animate-pulse">
+                      <i className="fas fa-exclamation-triangle text-sm"></i>
+                   </div>
+                   <p className="text-[10px] text-red-400 font-black text-center uppercase mb-4 leading-relaxed tracking-wider px-2">{error}</p>
+                   
+                   <div className="flex flex-col w-full space-y-2">
+                      <button 
+                        onClick={() => setIsAdminMode(true)}
+                        className="w-full text-[9px] text-white bg-indigo-600 py-3 rounded-2xl font-black uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-lg"
+                      >
+                        Try Different API Key
+                      </button>
+                      <button 
+                        onClick={() => handleGenerate()}
+                        disabled={cooldown > 0}
+                        className={`w-full text-[9px] py-3 rounded-2xl font-black uppercase tracking-widest transition-all ${
+                          cooldown > 0 ? 'bg-slate-900 text-slate-700 cursor-not-allowed' : 'bg-slate-800 text-white hover:bg-slate-700'
+                        }`}
+                      >
+                        {cooldown > 0 ? `Retry Locked (${cooldown}s)` : 'Try Again'}
+                      </button>
+                   </div>
                 </div>
               )}
             </div>
@@ -440,10 +490,6 @@ const App: React.FC = () => {
                     <div className="space-y-2">
                       <h3 className="text-white font-black text-xl uppercase">{loadingMessages[loadingStep].en}</h3>
                       <p className="text-indigo-400 font-bold text-xs uppercase">{loadingMessages[loadingStep].bn}</p>
-                    </div>
-                    <div className="flex items-center justify-center space-x-2 bg-indigo-500/5 px-4 py-2 rounded-full border border-indigo-500/10 max-w-fit mx-auto">
-                      <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Active Engine:</span>
-                      <span className="text-[9px] font-mono text-white/80">Key *{activeKeyLastDigits}</span>
                     </div>
                   </div>
                 </div>
