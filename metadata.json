@@ -1,0 +1,7 @@
+{
+  "name": "Passport AI Studio",
+  "description": "Professional AI-powered studio to transform your casual photos into official 2x2 passport-sized photos with formal attire using Gemini 2.5 Flash Image.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
