@@ -5,38 +5,21 @@ import { PhotoAttire } from "../types";
 const MODEL_NAME = 'gemini-2.5-flash-image';
 
 /**
- * Validates the API key. 
- * Results are cached in the UI layer (App.tsx) to prevent redundant hits.
+ * Generates a passport photo using the Gemini API.
+ * Uses process.env.API_KEY exclusively as per system requirements.
  */
-export const validateApiKey = async (key: string): Promise<boolean> => {
-  try {
-    const ai = new GoogleGenAI({ apiKey: key });
-    // Use the lightest possible model for validation to save quota
-    const response = await ai.models.generateContent({
-      model: 'gemini-flash-lite-latest',
-      contents: 'ping',
-    });
-    return !!response.text;
-  } catch (error: any) {
-    console.error("API Key Validation Failed:", error);
-    return false;
-  }
-};
-
 export const generatePassportPhoto = async (
   base64Image: string,
   attire: PhotoAttire,
-  bgColor: { name: string, hex: string },
-  sharpness: number = 85,
-  manualKey?: string
+  bgColor: { name: string, hex: string }
 ): Promise<string> => {
-  const apiKey = manualKey || localStorage.getItem('STUDIO_API_KEY');
+  const apiKey = process.env.API_KEY;
   
   if (!apiKey) {
-    throw new Error('API Key Missing. Please set your key in Studio Controls.');
+    throw new Error('API Configuration Error: System key missing.');
   }
 
-  const ai = new GoogleGenAI({ apiKey: apiKey });
+  const ai = new GoogleGenAI({ apiKey });
   
   const systemInstruction = `You are a professional biometric passport photographer. 
   Your task is to generate an OFFICIAL 2x2 inch passport photo.
@@ -84,13 +67,9 @@ export const generatePassportPhoto = async (
     console.error("Gemini API Error:", error);
     const msg = error.message || '';
     
-    // Explicit 429 handling with instructions
     if (msg.includes('429')) {
-      throw new Error('QUOTA_EXCEEDED: You have hit the per-minute limit for the Free Tier. Please wait 60 seconds before trying again.');
+      throw new Error('QUOTA_EXCEEDED: Daily or per-minute limit reached. Please try again later.');
     }
-    if (msg.includes('401') || msg.includes('403')) {
-      throw new Error('INVALID_KEY: Your API key is incorrect or has been disabled. Please check AI Studio.');
-    }
-    throw new Error(msg || 'Engine communication error.');
+    throw new Error('Studio engine communication error. Please check your connection.');
   }
 };
