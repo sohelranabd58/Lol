@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import Header from './components/Header';
 import ImageUploader from './components/ImageUploader';
@@ -145,9 +146,12 @@ const App: React.FC = () => {
   const handleGenerate = async () => {
     if (!selectedFile || isGenerating) return;
     
-    const keyToUse = manualApiKey.trim() || localStorage.getItem('STUDIO_API_KEY') || "";
+    // Refresh manual key from localStorage to be sure
+    const storedKey = localStorage.getItem('STUDIO_API_KEY');
+    const keyToUse = manualApiKey.trim() || storedKey || "";
+    
     if (!keyToUse) {
-      setError("Please set your API Key in Studio Controls first. (আগে এপিআই কি সেট করুন)");
+      setError("Please set your API Key in Studio Controls. (কী আইকন এ ক্লিক করে কী দিন)");
       setIsAdminMode(true);
       return;
     }
@@ -176,6 +180,10 @@ const App: React.FC = () => {
       } catch (err: any) {
         console.error("Generation Error:", err);
         setError(err.message || 'Error occurred during generation.');
+        // If quota or auth error, show admin mode
+        if (err.message.includes('Quota') || err.message.includes('Key')) {
+          setIsAdminMode(true);
+        }
       } finally {
         setIsGenerating(false);
       }
@@ -369,7 +377,19 @@ const App: React.FC = () => {
                 {isGenerating ? <><i className="fas fa-circle-notch fa-spin"></i><span>Processing...</span></> : <><i className="fas fa-bolt"></i><span>Render 2x2 Photo</span></>}
               </button>
               
-              {error && <div className="mt-6 p-4 bg-red-500/5 border border-red-500/10 rounded-2xl text-[9px] text-red-400 font-bold text-center uppercase animate-pulse">{error}</div>}
+              {error && (
+                <div className="mt-6 p-4 bg-red-500/5 border border-red-500/20 rounded-2xl flex flex-col items-center">
+                   <p className="text-[9px] text-red-400 font-bold text-center uppercase mb-2">{error}</p>
+                   {(error.includes('Quota') || error.includes('Key')) && (
+                     <button 
+                       onClick={() => setIsAdminMode(true)}
+                       className="text-[8px] text-white bg-red-600 px-4 py-1.5 rounded-full font-black uppercase tracking-widest hover:bg-red-500 transition-colors"
+                     >
+                       Open Settings / সেটিংস ঠিক করুন
+                     </button>
+                   )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -484,5 +504,4 @@ const App: React.FC = () => {
     </div>
   );
 };
-
 export default App;
