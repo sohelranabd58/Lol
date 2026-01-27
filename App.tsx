@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import Header from './components/Header';
 import ImageUploader from './components/ImageUploader';
@@ -92,15 +91,16 @@ const App: React.FC = () => {
   };
 
   const handleSaveApiKey = () => {
-    if (!manualApiKey || manualApiKey.trim().length < 20) {
+    const trimmedKey = manualApiKey.trim();
+    if (!trimmedKey || trimmedKey.length < 20) {
       setKeyValidationStatus('error');
       setTimeout(() => setKeyValidationStatus('idle'), 3000);
       return;
     }
     
-    // Validate for Google AI Studio Key format (usually starts with AIza)
-    if (manualApiKey.trim().startsWith('AIza')) {
-      localStorage.setItem('STUDIO_API_KEY', manualApiKey.trim());
+    if (trimmedKey.startsWith('AIza')) {
+      localStorage.setItem('STUDIO_API_KEY', trimmedKey);
+      setManualApiKey(trimmedKey);
       setKeyValidationStatus('success');
       setTimeout(() => {
         setKeyValidationStatus('idle');
@@ -144,14 +144,23 @@ const App: React.FC = () => {
 
   const handleGenerate = async () => {
     if (!selectedFile || isGenerating) return;
+    
+    const keyToUse = manualApiKey.trim() || localStorage.getItem('STUDIO_API_KEY') || "";
+    if (!keyToUse) {
+      setError("Please set your API Key in Studio Controls first. (আগে এপিআই কি সেট করুন)");
+      setIsAdminMode(true);
+      return;
+    }
+
     setIsGenerating(true);
     setError(null);
-    try {
-      const reader = new FileReader();
-      reader.readAsDataURL(selectedFile);
-      reader.onloadend = async () => {
+
+    const reader = new FileReader();
+    reader.readAsDataURL(selectedFile);
+    reader.onloadend = async () => {
+      try {
         const base64 = reader.result as string;
-        const result = await generatePassportPhoto(base64, attire, selectedBg, 85, manualApiKey);
+        const result = await generatePassportPhoto(base64, attire, selectedBg, 85, keyToUse);
         setResultImageUrl(result);
         
         const newItem: StudioHistoryItem = { 
@@ -164,13 +173,17 @@ const App: React.FC = () => {
         const updatedHistory = [newItem, ...history].slice(0, MAX_HISTORY);
         setHistory(updatedHistory);
         syncHistory(updatedHistory);
-        
+      } catch (err: any) {
+        console.error("Generation Error:", err);
+        setError(err.message || 'Error occurred during generation.');
+      } finally {
         setIsGenerating(false);
-      };
-    } catch (err: any) {
-      setError(err.message || 'Error occurred.');
+      }
+    };
+    reader.onerror = () => {
+      setError("Failed to read the selected file.");
       setIsGenerating(false);
-    }
+    };
   };
 
   const deleteHistoryItem = (id: string, e: React.MouseEvent) => {
@@ -189,7 +202,6 @@ const App: React.FC = () => {
 
   const generatePrintSheet = () => {
     if (!resultImageUrl) return;
-    // 4x6 inch at 300 DPI = 1200 x 1800 px
     const canvas = document.createElement('canvas');
     canvas.width = 1800; canvas.height = 1200;
     const ctx = canvas.getContext('2d');
@@ -199,7 +211,6 @@ const App: React.FC = () => {
     img.src = resultImageUrl;
     img.onload = () => {
       ctx.fillStyle = "white"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-      // Exactly 2x2 inch at 300 DPI = 600 x 600 px
       const photoSize = 600;
       const paddingX = (canvas.width - (3 * photoSize)) / 4;
       const paddingY = (canvas.height - (2 * photoSize)) / 3;
@@ -208,7 +219,6 @@ const App: React.FC = () => {
           const x = paddingX + col * (photoSize + paddingX);
           const y = paddingY + row * (photoSize + paddingY);
           ctx.drawImage(img, x, y, photoSize, photoSize);
-          // Drawing a very thin cut line
           ctx.strokeStyle = "#f1f5f9"; 
           ctx.lineWidth = 1;
           ctx.strokeRect(x, y, photoSize, photoSize);
