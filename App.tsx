@@ -2,12 +2,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Header from './components/Header';
 import ImageUploader from './components/ImageUploader';
-import { generatePassportPhoto, validateApiKey } from './services/geminiService';
+import { generatePassportPhoto } from './services/geminiService';
 import { PhotoAttire, StudioHistoryItem } from './types';
 
-const STORAGE_KEY = 'AMR_STUDIO_HISTORY';
+const HISTORY_STORAGE_KEY = 'AMR_STUDIO_HISTORY';
+const CACHE_STORAGE_KEY = 'AMR_STUDIO_CACHE';
 const MAX_HISTORY = 15;
-const QUOTA_COOLDOWN_TIME = 30; // seconds
 
 const App: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -21,16 +21,8 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'none' | 'men' | 'women'>('men');
   const [history, setHistory] = useState<StudioHistoryItem[]>([]);
   const [loadingStep, setLoadingStep] = useState(0);
-  
-  const [manualApiKey, setManualApiKey] = useState(localStorage.getItem('STUDIO_API_KEY') || '');
-  const [isAdminMode, setIsAdminMode] = useState(false);
-  const [keyValidationStatus, setKeyValidationStatus] = useState<'idle' | 'validating' | 'success' | 'error'>('idle');
-  const [cooldown, setCooldown] = useState(0);
 
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-
-  const activeKeyLastDigits = manualApiKey.length > 6 ? manualApiKey.slice(-6) : manualApiKey;
 
   const bgColors = [
     { name: 'Pure White', hex: '#FFFFFF', bn: 'সাদা', class: 'bg-white border-slate-200' },
@@ -73,7 +65,7 @@ const App: React.FC = () => {
   ];
 
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    const saved = localStorage.getItem(HISTORY_STORAGE_KEY);
     if (saved) {
       try {
         setHistory(JSON.parse(saved));
@@ -83,74 +75,70 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Cooldown logic for 429
-  useEffect(() => {
-    let timer: any;
-    if (cooldown > 0) {
-      timer = setInterval(() => {
-        setCooldown(prev => prev - 1);
-      }, 1000);
-    }
-    return () => clearInterval(timer);
-  }, [cooldown]);
-
   const syncHistory = (newHistory: StudioHistoryItem[]) => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(newHistory));
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(newHistory));
     } catch (e) {
-      if (newHistory.length > 1) {
-        const pruned = newHistory.slice(0, newHistory.length - 1);
-        setHistory(pruned);
-        syncHistory(pruned);
+      console.error("Storage full, could not sync history");
+    }
+  };
+
+  /**
+   * Generates a unique key for the current configuration to enable caching.
+   */
+  const getCacheKey = (base64: string): string => {
+    // Hash first 500 chars of base64 to distinguish images efficiently
+    const imgId = base64.substring(0, 500);
+    return `studio_v1_${imgId}_${attire}_${selectedBg.hex}`;
+  };
+
+  const handleGenerate = async () => {
+    if (!selectedFile || isGenerating) return;
+
+    setIsGenerating(true);
+    setError(null);
+
+    const reader = new FileReader();
+    reader.readAsDataURL(selectedFile);
+    reader.onloadend = async () => {
+      try {
+        const base64 = reader.result as string;
+        const cacheKey = getCacheKey(base64);
+        
+        // 1. Check local cache first
+        const cachedResult = localStorage.getItem(cacheKey);
+        if (cachedResult) {
+          console.log("Serving from local studio cache...");
+          // Small delay for UX feel
+          await new Promise(r => setTimeout(r, 1500));
+          setResultImageUrl(cachedResult);
+          setIsGenerating(false);
+          return;
+        }
+
+        // 2. No cache, proceed with strictly user-initiated API call
+        const result = await generatePassportPhoto(base64, attire, selectedBg);
+        
+        // 3. Save to cache and state
+        localStorage.setItem(cacheKey, result);
+        setResultImageUrl(result);
+        
+        const newItem: StudioHistoryItem = { 
+          id: Date.now().toString(), 
+          originalUrl: '', 
+          resultUrl: result, 
+          timestamp: Date.now() 
+        };
+        
+        const updatedHistory = [newItem, ...history].slice(0, MAX_HISTORY);
+        setHistory(updatedHistory);
+        syncHistory(updatedHistory);
+      } catch (err: any) {
+        setError(err.message || 'Error occurred during generation.');
+      } finally {
+        setIsGenerating(false);
       }
-    }
-  };
-
-  const handleSaveApiKey = async () => {
-    const trimmedKey = manualApiKey.trim();
-    if (!trimmedKey || trimmedKey.length < 20) {
-      setKeyValidationStatus('error');
-      setTimeout(() => setKeyValidationStatus('idle'), 3000);
-      return;
-    }
-
-    // Check session cache to avoid redundant hits
-    const cachedValidKey = sessionStorage.getItem(`valid_${trimmedKey}`);
-    if (cachedValidKey === 'true') {
-      localStorage.setItem('STUDIO_API_KEY', trimmedKey);
-      setKeyValidationStatus('success');
-      setTimeout(() => {
-        setKeyValidationStatus('idle');
-        setIsAdminMode(false);
-      }, 1000);
-      return;
-    }
-
-    setKeyValidationStatus('validating');
-    const isValid = await validateApiKey(trimmedKey);
-    
-    if (isValid) {
-      localStorage.setItem('STUDIO_API_KEY', trimmedKey);
-      sessionStorage.setItem(`valid_${trimmedKey}`, 'true');
-      setKeyValidationStatus('success');
-      setError(null);
-      setTimeout(() => {
-        setKeyValidationStatus('idle');
-        setIsAdminMode(false);
-      }, 1500);
-    } else {
-      setKeyValidationStatus('error');
-      setTimeout(() => setKeyValidationStatus('idle'), 3000);
-    }
-  };
-
-  const handleClearKey = () => {
-    if (window.confirm("Remove current API Key?")) {
-      localStorage.removeItem('STUDIO_API_KEY');
-      setManualApiKey('');
-      setKeyValidationStatus('idle');
-      setError(null);
-    }
+    };
   };
 
   useEffect(() => {
@@ -159,8 +147,6 @@ const App: React.FC = () => {
       interval = setInterval(() => {
         setLoadingStep(prev => (prev + 1) % loadingMessages.length);
       }, 2500);
-    } else {
-      setLoadingStep(0);
     }
     return () => clearInterval(interval);
   }, [isGenerating]);
@@ -183,71 +169,14 @@ const App: React.FC = () => {
     setError(null);
   };
 
-  const handleGenerate = async () => {
-    if (!selectedFile || isGenerating || cooldown > 0) return;
-    
-    const keyToUse = localStorage.getItem('STUDIO_API_KEY') || "";
-    if (!keyToUse) {
-      setError("Please set a VALID API Key first. (আগে সঠিক কী দিন)");
-      setIsAdminMode(true);
-      return;
-    }
-
-    setIsGenerating(true);
-    setError(null);
-
-    const reader = new FileReader();
-    reader.readAsDataURL(selectedFile);
-    reader.onloadend = async () => {
-      try {
-        const base64 = reader.result as string;
-        const result = await generatePassportPhoto(base64, attire, selectedBg, 85, keyToUse);
-        setResultImageUrl(result);
-        
-        const newItem: StudioHistoryItem = { 
-          id: Date.now().toString(), 
-          originalUrl: '', 
-          resultUrl: result, 
-          timestamp: Date.now() 
-        };
-        
-        const updatedHistory = [newItem, ...history].slice(0, MAX_HISTORY);
-        setHistory(updatedHistory);
-        syncHistory(updatedHistory);
-      } catch (err: any) {
-        console.error("Generation Error:", err);
-        let errorMsg = err.message || 'Error occurred during generation.';
-        
-        if (errorMsg.includes('QUOTA')) {
-          setCooldown(QUOTA_COOLDOWN_TIME);
-          errorMsg = "API Quota Full. আপনার ফ্রি লিমিট শেষ। অনুগ্রহ করে ৬০ সেকেন্ড অপেক্ষা করুন বা অন্য কী দিন।";
-        }
-        
-        setError(errorMsg);
-        if (errorMsg.includes('QUOTA') || errorMsg.includes('KEY')) {
-          setIsAdminMode(true);
-        }
-      } finally {
-        setIsGenerating(false);
-      }
-    };
-    reader.onerror = () => {
-      setError("Failed to read the selected file.");
-      setIsGenerating(false);
-    };
-  };
-
-  const deleteHistoryItem = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const updated = history.filter(item => item.id !== id);
-    setHistory(updated);
-    syncHistory(updated);
-  };
-
   const purgeHistory = () => {
-    if (window.confirm("Delete all studio archives?")) {
+    if (window.confirm("Delete all studio archives? This will also clear your local cache.")) {
       setHistory([]);
-      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(HISTORY_STORAGE_KEY);
+      // Clear specific studio cache entries
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('studio_v1_')) localStorage.removeItem(key);
+      });
     }
   };
 
@@ -312,61 +241,11 @@ const App: React.FC = () => {
                   <h2 className="text-xl font-black text-white uppercase tracking-tighter">Studio Controls</h2>
                   <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">স্টুডিও কন্ট্রোল</p>
                 </div>
-                <button 
-                  onClick={() => setIsAdminMode(!isAdminMode)}
-                  className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${isAdminMode ? 'bg-indigo-600 text-white shadow-[0_0_15px_rgba(79,70,229,0.4)]' : 'bg-slate-900 text-slate-600 hover:text-white hover:bg-slate-800'}`}
-                >
-                  <i className="fas fa-key text-xs"></i>
-                </button>
-              </div>
-
-              {isAdminMode && (
-                <div className="mb-6 p-6 bg-[#080b0f] border border-indigo-500/10 rounded-[2.5rem] animate-in slide-in-from-top-4 relative overflow-hidden group shadow-2xl">
-                  <div className="flex flex-col space-y-5">
-                    <div className="flex justify-between items-center">
-                      <label className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] block">
-                        Google AI Studio Key
-                      </label>
-                      {manualApiKey && (
-                        <div className="flex items-center space-x-2">
-                           <span className="text-[8px] font-mono text-indigo-400/60 bg-indigo-500/5 px-2 py-1 rounded-lg border border-indigo-500/10">
-                            Active: *{activeKeyLastDigits}
-                          </span>
-                          <button onClick={handleClearKey} className="text-[8px] text-red-500/50 hover:text-red-500 transition-colors uppercase font-black">Clear</button>
-                        </div>
-                      )}
-                    </div>
-                    
-                    <div className="relative">
-                      <div className={`p-4 bg-[#05070a] border ${keyValidationStatus === 'error' ? 'border-red-500/50' : keyValidationStatus === 'success' ? 'border-emerald-500/50' : keyValidationStatus === 'validating' ? 'border-indigo-500/50' : 'border-slate-800/80'} rounded-2xl flex items-center transition-all shadow-inner`}>
-                         <input 
-                          type="password"
-                          value={manualApiKey}
-                          onChange={(e) => { setManualApiKey(e.target.value); setKeyValidationStatus('idle'); }}
-                          placeholder="Paste AI Studio Key here..."
-                          className="w-full bg-transparent text-xs text-indigo-100 outline-none placeholder:text-slate-800 font-mono"
-                          disabled={keyValidationStatus === 'validating'}
-                        />
-                        {keyValidationStatus === 'validating' && <i className="fas fa-circle-notch fa-spin text-indigo-500 ml-2"></i>}
-                        {keyValidationStatus === 'success' && <i className="fas fa-check-circle text-emerald-500 ml-2 animate-in zoom-in"></i>}
-                        {keyValidationStatus === 'error' && <i className="fas fa-exclamation-circle text-red-500 ml-2 animate-in zoom-in"></i>}
-                      </div>
-                    </div>
-                    
-                    <button 
-                      onClick={handleSaveApiKey}
-                      disabled={keyValidationStatus === 'validating'}
-                      className={`w-full py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.3em] text-white transition-all shadow-xl ${
-                        keyValidationStatus === 'validating' ? 'bg-indigo-900 cursor-wait' :
-                        keyValidationStatus === 'success' ? 'bg-emerald-600' : 'bg-indigo-600 hover:bg-indigo-500 hover:shadow-indigo-600/30'
-                      }`}
-                    >
-                      {keyValidationStatus === 'validating' ? 'Validating Key...' : 
-                       keyValidationStatus === 'success' ? 'Verified & Saved' : 'Save & Validate Key'}
-                    </button>
-                  </div>
+                <div className="flex items-center space-x-2">
+                   <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                   <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Live Engine</span>
                 </div>
-              )}
+              </div>
 
               <ImageUploader onImageSelect={handleImageSelect} previewUrl={previewUrl} />
 
@@ -414,7 +293,6 @@ const App: React.FC = () => {
                     <div className="max-h-[350px] overflow-y-auto no-scrollbar space-y-2">
                       {activeTab === 'none' && renderDropdownItem(PhotoAttire.ORIGINAL_ATTIRE, attireConfig[PhotoAttire.ORIGINAL_ATTIRE])}
                       {Object.values(PhotoAttire).filter((val) => attireConfig[val].gender === activeTab && val !== PhotoAttire.ORIGINAL_ATTIRE).map((val) => renderDropdownItem(val, attireConfig[val]))}
-                      {activeTab !== 'none' && <div className="pt-2 mt-2 border-t border-slate-800/50 opacity-40">{renderDropdownItem(PhotoAttire.ORIGINAL_ATTIRE, attireConfig[PhotoAttire.ORIGINAL_ATTIRE])}</div>}
                     </div>
                   </div>
                 )}
@@ -423,46 +301,19 @@ const App: React.FC = () => {
               <div className="mt-10">
                 <button
                   onClick={handleGenerate}
-                  disabled={!selectedFile || isGenerating || cooldown > 0}
+                  disabled={!selectedFile || isGenerating}
                   className={`w-full py-5 rounded-[2rem] font-black text-[11px] uppercase tracking-[0.4em] text-white transition-all flex items-center justify-center space-x-4 shadow-3xl ${
-                    !selectedFile || isGenerating || cooldown > 0 ? 'bg-slate-900 text-slate-700 cursor-not-allowed border border-slate-800/40' : 'bg-indigo-600 hover:bg-indigo-700 hover:shadow-indigo-500/20 active:scale-95'
+                    !selectedFile || isGenerating ? 'bg-slate-900 text-slate-700 cursor-not-allowed border border-slate-800/40' : 'bg-indigo-600 hover:bg-indigo-700 hover:shadow-indigo-500/20 active:scale-95'
                   }`}
                 >
-                  {isGenerating ? <><i className="fas fa-circle-notch fa-spin"></i><span>Processing...</span></> : 
-                   cooldown > 0 ? <><i className="fas fa-clock"></i><span>Wait {cooldown}s</span></> :
-                   <><i className="fas fa-bolt"></i><span>Render 2x2 Photo</span></>}
+                  {isGenerating ? <><i className="fas fa-circle-notch fa-spin"></i><span>Processing...</span></> : <><i className="fas fa-bolt"></i><span>Render 2x2 Photo</span></>}
                 </button>
-                {manualApiKey && (
-                  <p className="text-center mt-3 text-[8px] font-black text-slate-600 uppercase tracking-widest">
-                    Using Engine: <span className="text-indigo-500">*{activeKeyLastDigits}</span>
-                  </p>
-                )}
               </div>
               
               {error && (
                 <div className="mt-6 p-5 bg-red-500/5 border border-red-500/20 rounded-[2.5rem] flex flex-col items-center">
-                   <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center text-red-500 mb-4 animate-pulse">
-                      <i className="fas fa-exclamation-triangle text-sm"></i>
-                   </div>
-                   <p className="text-[10px] text-red-400 font-black text-center uppercase mb-4 leading-relaxed tracking-wider px-2">{error}</p>
-                   
-                   <div className="flex flex-col w-full space-y-2">
-                      <button 
-                        onClick={() => setIsAdminMode(true)}
-                        className="w-full text-[9px] text-white bg-indigo-600 py-3 rounded-2xl font-black uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-lg"
-                      >
-                        Try Different API Key
-                      </button>
-                      <button 
-                        onClick={() => handleGenerate()}
-                        disabled={cooldown > 0}
-                        className={`w-full text-[9px] py-3 rounded-2xl font-black uppercase tracking-widest transition-all ${
-                          cooldown > 0 ? 'bg-slate-900 text-slate-700 cursor-not-allowed' : 'bg-slate-800 text-white hover:bg-slate-700'
-                        }`}
-                      >
-                        {cooldown > 0 ? `Retry Locked (${cooldown}s)` : 'Try Again'}
-                      </button>
-                   </div>
+                   <i className="fas fa-exclamation-triangle text-red-500 mb-3"></i>
+                   <p className="text-[10px] text-red-400 font-black text-center uppercase leading-relaxed tracking-wider">{error}</p>
                 </div>
               )}
             </div>
@@ -487,10 +338,8 @@ const App: React.FC = () => {
                     <i className="fas fa-magic text-4xl text-indigo-400/30 animate-pulse"></i>
                   </div>
                   <div className="space-y-4">
-                    <div className="space-y-2">
-                      <h3 className="text-white font-black text-xl uppercase">{loadingMessages[loadingStep].en}</h3>
-                      <p className="text-indigo-400 font-bold text-xs uppercase">{loadingMessages[loadingStep].bn}</p>
-                    </div>
+                    <h3 className="text-white font-black text-xl uppercase">{loadingMessages[loadingStep].en}</h3>
+                    <p className="text-indigo-400 font-bold text-xs uppercase">{loadingMessages[loadingStep].bn}</p>
                   </div>
                 </div>
               ) : (
@@ -499,21 +348,11 @@ const App: React.FC = () => {
                     <div className="bg-[#f8fafc] rounded-[2rem] overflow-hidden flex items-center justify-center shadow-inner" style={{ width: 'min(480px, 100%)', aspectRatio: '1/1' }}>
                       <img src={resultImageUrl || ''} alt="Passport Result" className="w-full h-full object-contain" />
                     </div>
-                    <div className="mt-6 flex justify-between items-center px-6">
-                      <div className="flex flex-col">
-                        <span className="text-[10px] font-black text-slate-800 uppercase tracking-widest leading-none">Biometric Ready</span>
-                        <span className="text-[7px] font-bold text-slate-400 uppercase mt-1">ISO/IEC 19794-5 COMPLIANT</span>
-                      </div>
-                      <span className="text-[10px] font-black text-slate-300 uppercase bg-slate-100 px-5 py-2 rounded-full border border-slate-200 shadow-sm">2 x 2 INCH / 51 x 51 MM</span>
-                    </div>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-12 w-full max-w-lg">
                     <button onClick={() => { const l = document.createElement('a'); l.href = resultImageUrl!; l.download = '2x2_photo.png'; l.click(); }} className="bg-indigo-600 hover:bg-indigo-700 text-white py-5 rounded-[2rem] font-black text-[11px] uppercase tracking-widest transition-all shadow-xl shadow-indigo-600/20 active:scale-95">Download Single 2x2</button>
                     <button onClick={generatePrintSheet} className="bg-emerald-600 hover:bg-emerald-700 text-white py-5 rounded-[2rem] font-black text-[11px] uppercase tracking-widest transition-all shadow-xl shadow-emerald-600/20 active:scale-95">Print 4x6 Sheet (6 Photos)</button>
-                    <button onClick={() => { setResultImageUrl(null); setSelectedFile(null); setPreviewUrl(null); }} className="sm:col-span-2 text-[10px] font-black text-slate-500 uppercase py-4 hover:text-white transition-all flex items-center justify-center space-x-2">
-                      <i className="fas fa-arrow-left text-[8px]"></i>
-                      <span>Upload New Photo / নতুন ফটো আপলোড</span>
-                    </button>
+                    <button onClick={() => { setResultImageUrl(null); setSelectedFile(null); setPreviewUrl(null); }} className="sm:col-span-2 text-[10px] font-black text-slate-500 uppercase py-4 hover:text-white transition-all">Upload New Photo</button>
                   </div>
                 </div>
               )}
@@ -523,40 +362,29 @@ const App: React.FC = () => {
               <div className="flex items-center justify-between mb-8">
                  <div>
                    <h3 className="text-white font-black text-lg uppercase tracking-tighter">Studio Archives</h3>
-                   <p className="text-slate-600 text-[9px] font-bold uppercase tracking-widest mt-1">আর্কাইভ / পূর্বের কাজ</p>
+                   <p className="text-slate-600 text-[9px] font-bold uppercase tracking-widest mt-1">আর্কাইভ</p>
                  </div>
                  {history.length > 0 && (
                    <button onClick={purgeHistory} className="text-[9px] font-black text-slate-700 hover:text-red-500 uppercase tracking-widest transition-colors flex items-center space-x-2">
                      <i className="fas fa-trash-alt"></i>
-                     <span>Purge All History</span>
+                     <span>Purge History & Cache</span>
                    </button>
                  )}
               </div>
 
               {history.length === 0 ? (
                 <div className="py-12 flex flex-col items-center justify-center border-2 border-dashed border-slate-800/40 rounded-[2.5rem]">
-                  <i className="fas fa-history text-3xl text-slate-800 mb-4 opacity-40"></i>
                   <p className="text-[10px] font-bold text-slate-700 uppercase tracking-[0.2em]">History will appear here</p>
                 </div>
               ) : (
-                <div className="flex gap-5 overflow-x-auto pb-6 no-scrollbar scroll-smooth">
+                <div className="flex gap-5 overflow-x-auto pb-6 no-scrollbar">
                   {history.map((item) => (
                     <div 
                       key={item.id}
                       onClick={() => { setResultImageUrl(item.resultUrl); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                      className="group relative flex-shrink-0 w-28 h-28 bg-[#05070a] border border-slate-800 rounded-[1.5rem] overflow-hidden cursor-pointer hover:border-indigo-600/50 transition-all active:scale-95 shadow-lg"
+                      className="group relative flex-shrink-0 w-28 h-28 bg-[#05070a] border border-slate-800 rounded-[1.5rem] overflow-hidden cursor-pointer hover:border-indigo-600/50 transition-all"
                     >
-                      <img src={item.resultUrl} alt="Archive" className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
-                      <div className="absolute inset-0 bg-indigo-600/5 opacity-0 group-hover:opacity-100"></div>
-                      <button 
-                        onClick={(e) => deleteHistoryItem(item.id, e)}
-                        className="absolute top-2 right-2 w-6 h-6 bg-black/70 backdrop-blur-lg rounded-full text-white opacity-0 group-hover:opacity-100 flex items-center justify-center hover:bg-red-600 transition-all border border-white/5 shadow-xl"
-                      >
-                        <i className="fas fa-times text-[8px]"></i>
-                      </button>
-                      <div className="absolute bottom-2 left-2 bg-black/60 backdrop-blur-md px-2 py-1 rounded-lg text-[7px] font-black text-white/80 border border-white/5">
-                        {new Date(item.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                      </div>
+                      <img src={item.resultUrl} alt="Archive" className="w-full h-full object-cover opacity-60 hover:opacity-100" />
                     </div>
                   ))}
                 </div>
@@ -566,18 +394,10 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      <footer className="py-10 bg-[#05070a] border-t border-slate-900 text-center">
-        <p className="text-[9px] text-slate-800 font-bold uppercase tracking-[0.5em]">Amr Studio AI • Professional 2x2 Passport Generator</p>
-      </footer>
-
       <style>{`
         @keyframes scan { 0% { top: -10%; opacity: 0; } 50% { opacity: 1; } 100% { top: 110%; opacity: 0; } }
         .no-scrollbar::-webkit-scrollbar { display: none; }
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
       `}</style>
-      <canvas ref={canvasRef} className="hidden" />
     </div>
   );
 };
