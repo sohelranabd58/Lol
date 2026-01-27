@@ -13,10 +13,11 @@ export const generatePassportPhoto = async (
   attire: PhotoAttire,
   bgColor: { name: string, hex: string }
 ): Promise<string> => {
+  // Cloudflare will inject this via the build step define.
   const apiKey = process.env.API_KEY;
   
-  if (!apiKey) {
-    throw new Error('API Configuration Error: System key missing.');
+  if (!apiKey || apiKey === "undefined") {
+    throw new Error('Cloudflare Environment Error: API_KEY is not reaching the frontend. Please check vite.config.ts and Redeploy.');
   }
 
   const ai = new GoogleGenAI({ apiKey });
@@ -50,7 +51,6 @@ export const generatePassportPhoto = async (
         ],
       },
       config: {
-        systemInstruction,
         imageConfig: {
           aspectRatio: "1:1",
         }
@@ -68,8 +68,8 @@ export const generatePassportPhoto = async (
     const msg = error.message || '';
     
     if (msg.includes('429')) {
-      throw new Error('QUOTA_EXCEEDED: Daily or per-minute limit reached. Please try again later.');
+      throw new Error('QUOTA_EXCEEDED: Daily limit reached. Try again later.');
     }
-    throw new Error('Studio engine communication error. Please check your connection.');
+    throw new Error(msg || 'Connection error with AI Studio.');
   }
 };
