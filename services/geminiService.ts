@@ -11,11 +11,15 @@ export const generatePassportPhoto = async (
   sharpness: number = 85,
   manualKey?: string
 ): Promise<string> => {
-  const apiKey = manualKey || process.env.API_KEY;
-  const ai = new GoogleGenAI({ apiKey: apiKey as string });
+  // Use manual key provided or fallback to environment variable
+  const apiKey = manualKey || (typeof process !== 'undefined' ? process.env.API_KEY : undefined);
   
-  const isKeepingOriginal = attire === PhotoAttire.ORIGINAL_ATTIRE;
+  if (!apiKey) {
+    throw new Error('API Key Missing. Please set your key in Studio Controls (আইকন ক্লিক করে কী সেট করুন)।');
+  }
 
+  const ai = new GoogleGenAI({ apiKey: apiKey });
+  
   const systemInstruction = `You are a professional biometric passport photographer. 
   Your task is to generate an OFFICIAL 2x2 inch passport photo.
   STRICT RULES:
@@ -57,13 +61,17 @@ export const generatePassportPhoto = async (
 
     const imagePart = response.candidates?.[0]?.content?.parts.find(p => p.inlineData);
     if (!imagePart || !imagePart.inlineData) {
-      throw new Error('Studio Engine failed to render. Try a clearer portrait.');
+      throw new Error('Studio Engine failed to render. Try a clearer portrait (ফটোটি পরিষ্কার নয়)।');
     }
 
     return `data:image/png;base64,${imagePart.inlineData.data}`;
   } catch (error: any) {
+    console.error("Gemini API Error:", error);
     if (error.message?.includes('429')) {
-      throw new Error('API Quota Full. Please wait a moment or use an Admin key.');
+      throw new Error('API Quota Full. আপনার ফ্রি লিমিট শেষ অথবা কি-তে সমস্যা। নিজের পার্সোনাল কি (Admin Key) ব্যবহার করুন।');
+    }
+    if (error.message?.includes('401') || error.message?.includes('403')) {
+      throw new Error('Invalid API Key. আপনার এপিআই কি সঠিক নয়। অনুগ্রহ করে পুনরায় চেক করুন।');
     }
     throw new Error(error.message || 'Studio server communication error.');
   }
