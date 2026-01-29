@@ -1,6 +1,20 @@
 {
-  "name": "Passport AI Studio",
-  "description": "Professional AI-powered studio to transform your casual photos into official 2x2 passport-sized photos with formal attire using Gemini 2.5 Flash Image.",
+  "name": "Shadow AI Studio",
+  "short_name": "ShadowStudio",
+  "description": "Professional AI-powered studio to transform your casual photos into official 2x2 passport-sized photos.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#05070a",
+  "theme_color": "#05070a",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3221/3221803.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
   "requestFramePermissions": [
     "camera"
   ]

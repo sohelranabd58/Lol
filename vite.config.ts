@@ -2,7 +2,6 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  define: {
-    'process.env.API_KEY': JSON.stringify(process.env.API_KEY)
-  }
+  // Removed explicit define for process.env.API_KEY to ensure 
+  // the platform's dynamic environment variables are not overwritten.
 });

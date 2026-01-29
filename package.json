@@ -1,5 +1,5 @@
 {
-  "name": "passport-ai-studio",
+  "name": "shadow-ai-studio",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,9 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "react-dom": "^19.2.4",
+    "react": "^19.2.4",
     "@google/genai": "^1.38.0",
-    "react-dom": "^19.2.3",
-    "react": "^19.2.3"
+    "vite": "^7.3.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
