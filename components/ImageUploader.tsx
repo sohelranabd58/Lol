@@ -1,13 +1,45 @@
 
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 
 interface ImageUploaderProps {
   onImageSelect: (file: File) => void;
   previewUrl: string | null;
+  label?: string;
+  subLabel?: string | React.ReactNode;
+  isProcessing?: boolean;
 }
 
-const ImageUploader: React.FC<ImageUploaderProps> = ({ onImageSelect, previewUrl }) => {
+const ImageUploader: React.FC<ImageUploaderProps> = ({ 
+  onImageSelect, 
+  previewUrl, 
+  label = "আপনার ছবি আপলোড করুন", 
+  subLabel = "গ্যালারি থেকে ছবি সিলেক্ট করুন",
+  isProcessing = false
+}) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [msgIndex, setMsgIndex] = useState(0);
+
+  const messages = [
+    "Analyzing facial geometry...",
+    "Adjusting attire details...",
+    "Applying biometric background...",
+    "Perfecting studio lighting...",
+    "Rendering 2x2 standard...",
+    "Finalizing image quality...",
+    "Almost ready for print..."
+  ];
+
+  useEffect(() => {
+    let interval: any;
+    if (isProcessing) {
+      interval = setInterval(() => {
+        setMsgIndex((prev) => (prev + 1) % messages.length);
+      }, 2000);
+    } else {
+      setMsgIndex(0);
+    }
+    return () => clearInterval(interval);
+  }, [isProcessing]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -15,18 +47,23 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onImageSelect, previewUrl
     }
   };
 
-  const triggerUpload = () => {
-    fileInputRef.current?.click();
-  };
-
   return (
     <div className="w-full">
+      {label && (
+        <p className="text-[12px] text-indigo-400 font-black uppercase tracking-[0.1em] mb-3 ml-2">
+          {label}
+        </p>
+      )}
       <div 
-        onClick={triggerUpload}
-        className={`relative group cursor-pointer border-2 border-dashed rounded-[3rem] transition-all duration-500 flex flex-col items-center justify-center min-h-[350px] overflow-hidden ${
+        onClick={() => {
+            if (isProcessing) return;
+            if ('vibrate' in navigator) navigator.vibrate(10);
+            fileInputRef.current?.click();
+        }}
+        className={`relative group cursor-pointer border-2 border-dashed rounded-[2.5rem] transition-all flex flex-col items-center justify-center min-h-[260px] overflow-hidden active:scale-[0.98] duration-300 ${
           previewUrl 
             ? 'border-indigo-500/40 bg-indigo-500/5' 
-            : 'border-slate-800 bg-slate-900/40 hover:border-indigo-500 hover:bg-indigo-500/10'
+            : 'border-white/10 bg-black/40 hover:border-indigo-500/30 shadow-inner'
         }`}
       >
         <input 
@@ -38,57 +75,51 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onImageSelect, previewUrl
         />
         
         {previewUrl ? (
-          <div className="absolute inset-0 w-full h-full flex items-center justify-center p-6">
-            <img src={previewUrl} alt="Preview" className="w-full h-full object-cover rounded-[2rem] shadow-2xl transition-all" />
+          <div className="absolute inset-0 w-full h-full flex items-center justify-center p-3">
+            <img src={previewUrl} alt="Preview" className={`w-full h-full object-cover rounded-[2rem] ring-1 ring-white/10 shadow-2xl transition-all duration-700 ${isProcessing ? 'blur-md grayscale opacity-50' : ''}`} />
             
-            {/* 2x2 Studio Overlay */}
-            <div className="absolute inset-0 pointer-events-none p-6">
-               <div className="w-full h-full border-2 border-indigo-500/30 rounded-[2rem] relative overflow-hidden">
-                  {/* Rule of Thirds / 2x2 Alignment */}
-                  <div className="absolute inset-0 grid grid-cols-2 grid-rows-2">
-                    <div className="border-[0.5px] border-indigo-500/10"></div>
-                    <div className="border-[0.5px] border-indigo-500/10"></div>
-                    <div className="border-[0.5px] border-indigo-500/10"></div>
-                    <div className="border-[0.5px] border-indigo-500/10"></div>
+            {isProcessing ? (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-500">
+                  <div className="mb-6 relative">
+                     <div className="w-20 h-20 border-4 border-indigo-500/20 rounded-full"></div>
+                     <div className="w-20 h-20 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
+                     <div className="absolute inset-0 flex items-center justify-center">
+                        <i className="fas fa-microchip text-indigo-500 animate-pulse"></i>
+                     </div>
                   </div>
-                  {/* Biometric Head Circle */}
-                  <div className="absolute top-[15%] left-1/2 -translate-x-1/2 w-[55%] h-[60%] border-2 border-dashed border-indigo-400/30 rounded-full"></div>
-                  <div className="absolute bottom-[20%] left-1/2 -translate-x-1/2 w-[70%] h-[2px] bg-indigo-400/20"></div>
-               </div>
-            </div>
-
-            <div className="absolute inset-0 bg-[#0f172a]/80 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center backdrop-blur-sm">
-              <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center text-indigo-600 mb-4 shadow-2xl transform scale-90 group-hover:scale-100 transition-transform">
-                <i className="fas fa-sync-alt text-2xl"></i>
+                  <div className="space-y-2">
+                    <h4 className="text-[12px] font-black text-white uppercase tracking-[0.2em] animate-pulse">Studio Processing</h4>
+                    <p className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest min-h-[20px] transition-all duration-500">
+                      {messages[msgIndex]}
+                    </p>
+                  </div>
+                  <div className="mt-8 flex gap-1">
+                    {messages.map((_, i) => (
+                      <div key={i} className={`h-1 w-4 rounded-full transition-all duration-500 ${i === msgIndex ? 'bg-indigo-500' : 'bg-white/10'}`}></div>
+                    ))}
+                  </div>
               </div>
-              <span className="text-white text-xs font-black uppercase tracking-widest">Change Photo</span>
-              <span className="text-slate-400 text-[10px] mt-1">ফটো পরিবর্তন করুন</span>
-            </div>
+            ) : (
+              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center backdrop-blur-[4px]">
+                 <div className="bg-white/10 p-4 rounded-full border border-white/20 mb-2">
+                    <i className="fas fa-sync-alt text-white text-xl"></i>
+                 </div>
+                 <span className="text-[10px] font-black text-white uppercase tracking-widest">ছবি পরিবর্তন করুন</span>
+              </div>
+            )}
           </div>
         ) : (
-          <div className="text-center p-12 group">
-            <div className="w-28 h-28 bg-slate-800/80 rounded-[2.5rem] flex items-center justify-center mx-auto mb-8 text-slate-500 group-hover:text-indigo-400 group-hover:bg-slate-700 group-hover:-rotate-3 transition-all shadow-3xl">
-              <i className="fas fa-cloud-upload-alt text-5xl"></i>
+          <div className="text-center p-8 space-y-4">
+            <div className="w-20 h-20 bg-slate-900 border border-white/5 rounded-[2rem] flex items-center justify-center mx-auto mb-2 text-indigo-500/50 shadow-2xl group-hover:scale-110 transition-transform duration-500 group-hover:text-indigo-400">
+              <i className="fas fa-camera-viewfinder text-3xl"></i>
             </div>
-            <h3 className="text-white font-black text-xl mb-3 tracking-tight uppercase">Upload Portrait</h3>
-            <p className="text-slate-500 text-[10px] uppercase font-bold tracking-[0.4em] mb-8">ফটো আপলোড করুন (2x2 Passport)</p>
-            
-            <div className="inline-flex items-center px-8 py-4 bg-indigo-600 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest shadow-xl shadow-indigo-600/30 group-hover:bg-indigo-500 transition-all">
-              Choose From Device
+            <div className="space-y-3 px-2">
+              <div className="text-[12px] text-slate-300 font-bold uppercase tracking-widest leading-relaxed">
+                {subLabel}
+              </div>
             </div>
           </div>
         )}
-      </div>
-      <div className="mt-6 p-5 bg-indigo-500/5 border border-indigo-500/10 rounded-3xl flex items-start">
-        <div className="w-8 h-8 rounded-xl bg-indigo-600/20 flex items-center justify-center text-indigo-400 mr-4 flex-shrink-0">
-          <i className="fas fa-lightbulb text-sm"></i>
-        </div>
-        <div className="space-y-1">
-          <p className="text-[11px] text-white font-black uppercase tracking-wider">Studio Tip / স্টুডিও টিপ</p>
-          <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
-            Ensure the subject is looking directly at the camera with shoulders level for the best 2x2 biometric result.
-          </p>
-        </div>
       </div>
     </div>
   );
